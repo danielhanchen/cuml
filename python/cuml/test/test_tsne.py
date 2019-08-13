@@ -77,3 +77,5 @@ def test_tsne(name):
                 assert trust > 0.88
         assert nans == 0
         del Y, tsne, nans, trust
+    del X, X_cudf
+    
