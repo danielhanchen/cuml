@@ -30,9 +30,10 @@ import warnings
 
 from cuml.common.base import Base
 from cuml.common.handle cimport cumlHandle
+from cuml.decomposition import PCA
 
 from cuml.utils import input_to_dev_array as to_cuda
-from librmm_cffi import librmm as rmm
+from numba import cuda
 
 from libcpp cimport bool
 from libc.stdint cimport uintptr_t
@@ -44,7 +45,7 @@ cimport cuml.common.cuda
 cdef extern from "tsne/tsne.h" namespace "ML" nogil:
     cdef void TSNE_fit(
         const cumlHandle &handle,
-        const float *X,
+        float *X,
         float *Y,
         const int n,
         const int p,
@@ -66,7 +67,7 @@ cdef extern from "tsne/tsne.h" namespace "ML" nogil:
         const float post_momentum,
         const long long random_state,
         const bool verbose,
-        const bool intialize_embeddings,
+        const bool pca_intialization,
         bool barnes_hut) except +
 
 
@@ -78,14 +79,15 @@ class TSNE(Base):
     dataset you give it, and is used in many areas including cancer research,
     music analysis and neural network weight visualizations.
 
-    The current cuML TSNE implementation is a first experimental release. It
-    defaults to use the 'exact' fitting algorithm, which is signficantly slower
-    then the Barnes-Hut algorithm as data sizes grow. A preview implementation
-    of Barnes-Hut (derived from CannyLabs' BH open source CUDA code) is also
-    available for problems with n_components = 2, though this implementation
-    currently has outstanding issues that can lead to crashes in rare
-    scenarios. Future releases of TSNE will fix these issues (tracked as cuML
-    Issue #1002) and switch Barnes-Hut to be the default.
+    Currently, cuML's TSNE supports the fast Barnes Hut O(NlogN) TSNE
+    approximation (derived from CannyLabs' BH open source CUDA code). This
+    allows TSNE to produce extremely fast embeddings when n_components = 2.
+    cuML defaults to this algorithm. A slower but more accurate Exact
+    algorithm is also provided.
+
+    PCA Intialization is also enabled for TSNE! It has been shown
+    that spectral initialization preserves global structure similarily to
+    PCA initialization.
 
     Parameters
     ----------
@@ -110,13 +112,18 @@ class TSNE(Base):
     metric : str 'euclidean' only (default 'euclidean')
         Currently only supports euclidean distance. Will support cosine in
         a future release.
-    init : str 'random' only (default 'random')
-        Currently only supports random intialization. Will support PCA
-        intialization in a future release.
+    init : str 'random' or 'pca' (default 'random')
+        Currently supports random intialization and PCA intialization.
+        Use PCA if you want TSNE to better preserve global structure.
     verbose : int (default 0)
         Level of verbosity. If > 0, prints all help messages and warnings.
+        Most messages will be printed inside the Python Console.
     random_state : int (default None)
-        Setting this can allow future runs of TSNE to look the same.
+        Setting this can allow future runs of TSNE to look mostly the same.
+        It is known that TSNE tends to have vastly different outputs on
+        many runs. Try using spectral intialization to possible counteract
+        this problem. It is known that small perturbations can directly
+        change the result of the embedding for parallel TSNE implementations.
     method : str 'barnes_hut' or 'exact' (default 'barnes_hut')
         Options are either barnes_hut or exact. It is recommend that you use
         the barnes hut approximation for superior O(nlogn) complexity.
@@ -232,10 +239,10 @@ class TSNE(Base):
             warnings.warn("TSNE does not support {} but only Euclidean. "
                           "Will do in the near future.".format(metric))
             metric = 'euclidean'
-        if init.lower() != 'random':
+        init = init.lower()
+        if init != 'random' and init != 'pca':
             warnings.warn("TSNE does not support {} but only random "
-                          "intialization. Will do in the near "
-                          "future.".format(init))
+                          "or PCA intialization.".format(init))
             init = 'random'
         if verbose != 0:
             verbose = 1
@@ -322,11 +329,12 @@ class TSNE(Base):
             raise ValueError("data should be two dimensional")
 
         cdef uintptr_t X_ptr
+        cdef str order = 'F' if self.init == 'pca' else 'C'
         if self._should_downcast:
-            _X, X_ptr, n, p, dtype = to_cuda(X, order='C',
+            _X, X_ptr, n, p, dtype = to_cuda(X, order=order,
                                              convert_to_dtype=np.float32)
         else:
-            _X, X_ptr, n, p, dtype = to_cuda(X, order='C',
+            _X, X_ptr, n, p, dtype = to_cuda(X, order=order,
                                              check_dtype=np.float32)
 
         if n <= 1:
@@ -340,7 +348,7 @@ class TSNE(Base):
             self.perplexity = n
 
         # Prepare output embeddings
-        Y = rmm.device_array(
+        Y = cuda.device_array(
             (n, self.n_components),
             order="F",
             dtype=np.float32)
@@ -353,10 +361,7 @@ class TSNE(Base):
                 print("Learning rate is adpative. In TSNE paper, "
                       "it has been shown that as n->inf, "
                       "Barnes Hut works well if n_neighbors->30, "
-                      "learning_rate->20000, early_exaggeration->24.")
-                print("cuML uses an adpative method."
-                      "n_neighbors decreases to 30 as n->inf. "
-                      "Likewise for the other params.")
+                      "learning_rate->20000, early_exaggeration->12.")
             if n <= 2000:
                 self.n_neighbors = min(max(self.n_neighbors, 90), n)
             else:
@@ -364,7 +369,7 @@ class TSNE(Base):
                 self.n_neighbors = max(int(102 - 0.0012 * n), 30)
             self.pre_learning_rate = max(n / 3.0, 1)
             self.post_learning_rate = self.pre_learning_rate
-            self.early_exaggeration = 24.0 if n > 10000 else 12.0
+            self.early_exaggeration = 12.0
             if self.verbose:
                 print("New n_neighbors = {}, "
                       "learning_rate = {}, "
@@ -399,7 +404,7 @@ class TSNE(Base):
                  <float> self.post_momentum,
                  <long long> seed,
                  <bool> self.verbose,
-                 <bool> True,
+                 <bool> (self.init == 'pca'),
                  <bool> (self.method == 'barnes_hut'))
 
         # Clean up memory
