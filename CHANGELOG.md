@@ -1,15 +1,15 @@
 # cuML 0.10.0 (Date TBD)
 
 ## New Features
-- PR #1071: Selective eigen solver of cuSolver 
-
+- PR #1071: Selective eigen solver of cuSolver
 - PR #1073: Updating RF wrappers to use FIL for GPU accelerated prediction
+- PR #1104: CUDA 10.1 support
 
 ## Improvements
 - PR #961: High Peformance RF; HIST algo
 - PR #1028: Dockerfile updates after dir restructure. Conda env yaml to add statsmodels as a dependency
 - PR #763: Add examples to train_test_split documentation
-- PR #1076: Paying off some UMAP / Spectral tech debt. 
+- PR #1076: Paying off some UMAP / Spectral tech debt.
 - PR #1086: Ensure RegressorMixin scorer uses device arrays
 - PR #1098: TSNE PCA Intialization
 
@@ -26,6 +26,7 @@
 - PR #1072: Remove pip requirements and setup
 - PR #1074: Fix flake8 CI style check
 - PR #1088: Change straggling numba python allocations to use RMM
+- PR #1106: Pinning Distributed version to match Dask for consistent CI results
 
 # cuML 0.9.0 (21 Aug 2019)
 
